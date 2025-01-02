@@ -3,11 +3,11 @@ import java.util.LinkedList;
 World world;
 int world_width, world_height;
 AgentPool agent_pool;
-final int AGENT_COUNT = 1000;
-final float UNITS_PER_PIXEL = 5;
+final int AGENT_COUNT = 50;
+final float UNITS_PER_PIXEL = 3;
 void setup() {
-  size(1000, 1000);
-  noSmooth();
+  size(1000,1000,P2D);
+  ((PGraphicsOpenGL)g).textureSampling(2);
   world_width = int(width/UNITS_PER_PIXEL);
   world_height = int(height/UNITS_PER_PIXEL);
   world = new World(world_width, world_height);
@@ -19,19 +19,13 @@ void draw() {
   agent_pool.update();
   world.update();
   world.display();
-  if(keyPressed&&key==' '){
-    world.display_extra(); // display tomatoes, yam, roads, ect. CAUSES LAG
-  }
-  if(mousePressed){
-    agent_pool.display_debug();
-  }
   agent_pool.display();
+  agent_pool.display_debug();
   textAlign(LEFT,TOP);
   fill(255);
   textSize(20);
   text(int(frameRate),0,0);
-  text(agent_pool.contains_count,0,20);
-  text(agent_pool.contains_count2,0,40);
-  text(agent_pool.bfs_count,0,60);
-  //println(world.farmable_tiles.size());
+}
+void keyPressed(){
+  draw();
 }

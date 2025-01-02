@@ -1,189 +1,107 @@
 class Agent {
   PVector position;
-  int[][] distances;
-  boolean[][] reachable;
   PVector goal;
-  boolean has_goal = false;
+  boolean moving = false;
   ArrayList<PVector> path = new ArrayList();
-  PVector possible_goal;
-  PVector last_pos;
-  int current_path_element = 0;
-  Agent(float x, float y) {
+  int agent_group_index;
+  int index;
+  int path_element;
+  int frames_not_moving = 0;
+  boolean had_bfs = false;
+  final int inactivity_index = 1; //frames spent not moving
+  Agent(int x, int y, int agent_group_index, int index) {
     position = new PVector(x, y);
-    last_pos = position.copy();
-    distances = new int [world.w][world.h];
-    reachable = new boolean [world.w][world.h];
-    reset_distances();
-    calculate_reachable();
+    this.agent_group_index = agent_group_index;
+    this.index = index;
   }
   void update() {
-    last_pos = position.copy();
-    if (goal!=null) {
-      move_to_goal();
-      if (world.tiles[(int)position.x][(int)position.y].tile_type == Tile_type.GRASS) {
-        world.tiles[(int)position.x][(int)position.y].tile_type = Tile_type.TOMATO_PLANTED;
-      } else if (world.tiles[(int)position.x][(int)position.y].tile_type == Tile_type.TOMATO_RIPE) {
-        world.tiles[(int)position.x][(int)position.y].tile_type = Tile_type.TOMATO_UNRIPE;
+    if (!moving) {
+      frames_not_moving++;
+      agent_pool.agent_groups.get(agent_group_index).agent_coords[(int)position.x][(int)position.y] = index;
+      if (frames_not_moving>inactivity_index&&!agent_pool.agent_groups.get(agent_group_index).bfs_requests.contains(index)) {
+        agent_pool.agent_groups.get(agent_group_index).requestBFS(index);
       }
-    } else {
-      if (!is_goal(world.tiles[(int)position.x][(int)position.y].tile_type)) {
-        has_goal = false;
-        possible_goal=null;
-        if(!(keyPressed&&key=='w')){
-          for (int k = 0; k<world.farmable_tiles.size(); k++) {
-            int i = (int)world.farmable_tiles.get(k).x;
-            int j = (int)world.farmable_tiles.get(k).y;
-            if (reachable[i][j]) {
-              if (is_goal(world.tiles[i][j].tile_type)) {
-                agent_pool.contains_count++;
-                if (!agent_pool.goal_claimed[i][j]) {
-                  possible_goal = new PVector(i, j);
-                  has_goal = true;
-                  break;
-                }
+    }
+    if (moving) {
+      had_bfs = true;
+      frames_not_moving = 0;
+      position = path.get(path_element);
+      path_element--;
+      if (path_element<0) {
+        moving = false;
+        goal = null;
+        interact();
+      }
+    }
+  }
+  void interact() {
+    if (is_goal(world.tiles[(int)position.x][(int)position.y].tile_type)) {
+      if (world.tiles[(int)position.x][(int)position.y].tile_type==Tile_type.GRASS) {
+        Plant_type here = Plant_type.NONE;
+        final int CHECK_RADIUS = 10; // what radius around the agent to check for matching crops
+        for (int dx = -CHECK_RADIUS; dx<=CHECK_RADIUS; dx++) {
+          for (int dy = -CHECK_RADIUS; dy<=CHECK_RADIUS; dy++) {
+            if (valid_coordinates(position.x+dx, position.y+dy)) {
+              if (world.tiles[(int)position.x+dx][(int)position.y+dy].plant_type!=Plant_type.NONE) {
+                here = world.tiles[(int)position.x+dx][(int)position.y+dy].plant_type;
+                dx = MAX_INT-1;
+                break;
               }
             }
           }
         }
-        if (has_goal) {
-          bfs((int)position.x, (int)position.y);
-          if (goal!=null) {
-            build_path((int)goal.x, (int)goal.y);
+        if (here == Plant_type.TOMATO) {
+          world.tiles[(int)position.x][(int)position.y].tile_type=Tile_type.TOMATO_PLANTED;
+          world.tiles[(int)position.x][(int)position.y].plant_type=Plant_type.TOMATO;
+          agent_pool.tomatoes_planted++;
+        } else if (here == Plant_type.YAM) {
+          world.tiles[(int)position.x][(int)position.y].tile_type=Tile_type.YAM_PLANTED;
+          world.tiles[(int)position.x][(int)position.y].plant_type=Plant_type.YAM;
+          agent_pool.yams_planted++;
+        } else if (here == Plant_type.NONE) {
+          if (agent_pool.tomatoes_planted>agent_pool.yams_planted) {
+            world.tiles[(int)position.x][(int)position.y].tile_type=Tile_type.YAM_PLANTED;
+            world.tiles[(int)position.x][(int)position.y].plant_type=Plant_type.YAM ;
+            agent_pool.yams_planted++;
           } else {
-            agent_pool.no_goal_bfs++;
+            world.tiles[(int)position.x][(int)position.y].tile_type=Tile_type.TOMATO_PLANTED;
+            world.tiles[(int)position.x][(int)position.y].plant_type=Plant_type.TOMATO;
+            agent_pool.tomatoes_planted++;
           }
         }
-      } else if (world.tiles[(int)position.x][(int)position.y].tile_type==Tile_type.GRASS) {
-        world.tiles[(int)position.x][(int)position.y].tile_type = Tile_type.TOMATO_PLANTED;
-      } else if (world.tiles[(int)position.x][(int)position.y].tile_type==Tile_type.TOMATO_RIPE) {
-        world.tiles[(int)position.x][(int)position.y].tile_type = Tile_type.TOMATO_UNRIPE;
+        world.tiles[(int)position.x][(int)position.y].update_needed = true;
+      }
+      if (world.tiles[(int)position.x][(int)position.y].tile_type==Tile_type.TOMATO_RIPE) {
+        world.tiles[(int)position.x][(int)position.y].tile_type=Tile_type.TOMATO_STALK;
+        world.tiles[(int)position.x][(int)position.y].update_needed = true;
+      }
+      if (world.tiles[(int)position.x][(int)position.y].tile_type==Tile_type.YAM_GROWN) {
+        world.tiles[(int)position.x][(int)position.y].tile_type=Tile_type.YAM_ROOTS;
+        world.tiles[(int)position.x][(int)position.y].update_needed = true;
       }
     }
   }
+  void setup_for_walk() {
+    path_element = int(path.size()-1);
+    moving = true;
+    goal = path.get(0).copy();
+  }
   void display() {
     colorMode(RGB);
-    fill(255, 0, 0);
+    if (had_bfs) {
+      fill(0, 255, 0, 100);
+    } else {
+      fill(255, 0, 0, 100);
+    }
+    rectMode(CENTER);
     noStroke();
-    rect(position.x*(width/world_width), position.y*(height/world_height), width/world_width, height/world_height);
+    circle(position.x*(width/world_width), position.y*(height/world_height), agent_pool.agent_groups.get(agent_group_index).MAX_AGENT_TRAVEL_DISTANCE*(float(width)/world.w));
   }
   void display_debug() {
     colorMode(RGB);
-    //if (possible_goal!=null) {
-    //  stroke(0, 255, 0);
-    //  line(position.x*(width/world_width), position.y*(height/world_height), possible_goal.x*(width/world_width), possible_goal.y*(height/world_height));
-    //}
     if (goal!=null) {
       stroke(0);
       line(position.x*(width/world_width), position.y*(height/world_height), goal.x*(width/world_width), goal.y*(height/world_height));
     }
-  }
-  void move_to_goal() {
-    //if (!is_goal(world.tiles[(int)goal.x][(int)goal.y].tile_type)) {
-    //  remove_goal();
-    //  return;
-    //}
-    position = path.get(current_path_element).copy();
-    current_path_element--;
-    if (position.x==goal.x&&position.y==goal.y) {
-      remove_goal();
-    }
-  }
-  void build_path(int x, int y) {
-    if (distances[x][y]!=-1) {
-      path = new ArrayList<PVector>();
-      path.add(new PVector(x, y));
-      for (int i = distances[x][y]-1; i>=0; i--) {
-        int px = (int)path.get(path.size()-1).x;
-        int py = (int)path.get(path.size()-1).y;
-        for (int dx = -1; dx<=1; dx++) {
-          for (int dy = -1; dy<=1; dy++) {
-            //if (abs(dx)+abs(dy)==1) {
-            if (valid_coordinates(px+dx, py+dy)) {
-              if(distances[px+dx][py+dy]!=-1){
-                if (distances[px][py] > distances[px+dx][py+dy]) {
-                  path.add(new PVector(px+dx, py+dy));
-                  dy = 2;
-                  dx = 2;
-                }
-              }
-            }
-          }
-        }
-      }
-      current_path_element = path.size()-2; // last element is current position
-    }
-  }
-  void bfs(int x, int y) {
-    agent_pool.bfs_count++;
-    reset_distances();
-    Queue<PVector> queue = new LinkedList();
-    queue.add(new PVector(x, y));
-    distances[x][y] = 0;
-    while (!queue.isEmpty()) {
-      PVector current = queue.poll();
-      for (int dx = -1; dx<=1; dx++) {
-        for (int dy = -1; dy<=1; dy++) {
-          //if (abs(dx)+abs(dy)==1) {
-          if (valid_coordinates(current.x+dx, current.y+dy)) {
-            if (distances[(int)current.x+dx][(int)current.y+dy]==-1) {
-              if (walkable(world.tiles[(int)current.x+dx][(int)current.y+dy].tile_type)) {
-                distances[(int)current.x+dx][(int)current.y+dy] = distances[(int)current.x][(int)current.y]+1;
-                queue.add(new PVector(current.x+dx, current.y+dy));
-                if (is_goal(world.tiles[(int)current.x+dx][(int)current.y+dy].tile_type)) {
-                  agent_pool.contains_count2++;
-                  if (!agent_pool.goal_claimed[(int)current.x+dx][(int)current.y+dy]) {
-                    goal = new PVector(current.x+dx, current.y+dy);
-                    agent_pool.goal_claimed[(int)goal.x][(int)goal.y] = true;
-                    return;
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    }
-  }
-  void calculate_reachable() {
-    int x = (int)position.x;
-    int y = (int)position.y;
-    reset_reachable();
-    Queue<PVector> queue = new LinkedList();
-    queue.add(new PVector(x, y));
-    reachable[x][y] = true;
-    while (!queue.isEmpty()) {
-      PVector current = queue.poll();
-      for (int dx = -1; dx<=1; dx++) {
-        for (int dy = -1; dy<=1; dy++) {
-          //if (abs(dx)+abs(dy)==1){
-          if (valid_coordinates(current.x+dx, current.y+dy)) {
-            if (!reachable[(int)current.x+dx][(int)current.y+dy]) {
-              if (walkable(world.tiles[(int)current.x+dx][(int)current.y+dy].tile_type)) {
-                reachable[(int)current.x+dx][(int)current.y+dy] = true;
-                queue.add(new PVector((int)current.x+dx, (int)current.y+dy));
-              }
-            }
-          }
-        }
-      }
-    }
-  }
-  void reset_reachable() {
-    for (int i = 0; i<world.w; i++) {
-      for (int j = 0; j<world.h; j++) {
-        reachable[i][j] = false;
-      }
-    }
-  }
-  void reset_distances() {
-    for (int i = 0; i<world.w; i++) {
-      for (int j = 0; j<world.h; j++) {
-        distances[i][j] = -1;
-      }
-    }
-  }
-  void remove_goal() {
-    agent_pool.goal_claimed[(int)goal.x][(int)goal.y] = false;
-    goal = null;
   }
 }
